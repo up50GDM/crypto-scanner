@@ -16,11 +16,13 @@ def run_backtest(
     momentum_min=0.0
 ):
     """
-    Historischer Backtest.
+    Historischer Backtest ohne überlappende Trades.
 
-    Jeder Trade verwendet das gesamte aktuelle Kapital.
+    Nach einem Einstieg wird die Position für die komplette
+    Haltedauer gehalten. Während dieser Zeit werden neue Signale
+    ignoriert.
+
     Gebühren und Slippage werden berücksichtigt.
-
     Der Backtest dient ausschließlich zur Simulation.
     """
 
@@ -32,9 +34,9 @@ def run_backtest(
     peak_capital = initial_capital
     max_drawdown_percent = 0.0
 
-    last_index = len(df) - holding_period
+    i = 0
 
-    for i in range(last_index):
+    while i < len(df) - holding_period:
 
         row = df.iloc[i]
 
@@ -46,14 +48,21 @@ def run_backtest(
             momentum_min=momentum_min
         )
 
+        # Kein Signal -> nächste Kerze
         if not signal:
+            i += 1
             continue
 
+        # Einstieg
         entry_price = row["close"]
+        entry_time = row["timestamp"]
 
-        exit_row = df.iloc[i + holding_period]
+        # Ausstieg nach der definierten Haltedauer
+        exit_index = i + holding_period
+        exit_row = df.iloc[exit_index]
 
         exit_price = exit_row["close"]
+        exit_time = exit_row["timestamp"]
 
         # Brutto-Rendite
         gross_profit_percent = (
@@ -61,13 +70,15 @@ def run_backtest(
             / entry_price
         ) * 100
 
-        # Gesamtkosten
+        # Gebühren
         total_fee_percent = fee_per_side * 2
 
+        # Slippage
         total_slippage_percent = (
             slippage_per_side * 2
         )
 
+        # Gesamtkosten
         total_cost_percent = (
             total_fee_percent
             + total_slippage_percent
@@ -92,7 +103,7 @@ def run_backtest(
         if capital > peak_capital:
             peak_capital = capital
 
-        # Drawdown berechnen
+        # Drawdown
         drawdown_percent = (
             (capital - peak_capital)
             / peak_capital
@@ -103,9 +114,9 @@ def run_backtest(
 
         trades.append({
             "Trade": len(trades) + 1,
-            "Entry Time": row["timestamp"],
+            "Entry Time": entry_time,
             "Entry Price": entry_price,
-            "Exit Time": exit_row["timestamp"],
+            "Exit Time": exit_time,
             "Exit Price": exit_price,
             "Holding Period": holding_period,
             "Gross Profit %": gross_profit_percent,
@@ -117,8 +128,14 @@ def run_backtest(
             "Drawdown %": drawdown_percent
         })
 
+        # WICHTIG:
+        # Wir springen direkt hinter den Ausstieg.
+        # Dadurch können sich Trades nicht überschneiden.
+        i = exit_index + 1
+
     trades_df = pd.DataFrame(trades)
 
+    # Keine Trades
     if trades_df.empty:
 
         statistics = {
@@ -134,24 +151,29 @@ def run_backtest(
 
         return trades_df, statistics
 
+    # Gewinner
     winning_trades = (
         trades_df["Net Profit %"] > 0
     ).sum()
 
     total_trades = len(trades_df)
 
+    # Trefferquote
     win_rate = (
         winning_trades / total_trades
     ) * 100
 
+    # Durchschnittlicher Trade
     average_profit = (
         trades_df["Net Profit %"].mean()
     )
 
+    # Summe der Einzelrenditen
     total_profit = (
         trades_df["Net Profit %"].sum()
     )
 
+    # Gesamte Gebühren
     total_fees = (
         trades_df["Fees %"].sum()
     )
