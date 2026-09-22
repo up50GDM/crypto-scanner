@@ -9,32 +9,28 @@ def run_backtest(
     holding_period=24,
     fee_per_side=0.40,
     slippage_per_side=0.0,
+    initial_capital=1000.0,
     rsi_min=50,
     rsi_max=70,
     volume_multiplier=1.5,
     momentum_min=0.0
 ):
     """
-    Führt einen einfachen historischen Backtest durch.
+    Historischer Backtest.
 
-    Einstieg:
-    Schlusskurs der Signal-Kerze.
+    Jeder Trade verwendet das gesamte aktuelle Kapital.
+    Gebühren und Slippage werden berücksichtigt.
 
-    Ausstieg:
-    Schlusskurs nach der definierten Anzahl von Kerzen.
-
-    fee_per_side:
-        Handelsgebühr pro Seite in Prozent.
-        Beispiel: 0.40 bedeutet 0.40 % beim Kauf
-        und 0.40 % beim Verkauf.
-
-    slippage_per_side:
-        Angenommene Slippage pro Seite in Prozent.
+    Der Backtest dient ausschließlich zur Simulation.
     """
 
     df = add_indicators(df)
 
     trades = []
+
+    capital = initial_capital
+    peak_capital = initial_capital
+    max_drawdown_percent = 0.0
 
     last_index = len(df) - holding_period
 
@@ -54,7 +50,9 @@ def run_backtest(
             continue
 
         entry_price = row["close"]
+
         exit_row = df.iloc[i + holding_period]
+
         exit_price = exit_row["close"]
 
         # Brutto-Rendite
@@ -63,12 +61,16 @@ def run_backtest(
             / entry_price
         ) * 100
 
-        # Gebühren + Slippage
+        # Gesamtkosten
+        total_fee_percent = fee_per_side * 2
+
+        total_slippage_percent = (
+            slippage_per_side * 2
+        )
+
         total_cost_percent = (
-            fee_per_side
-            + fee_per_side
-            + slippage_per_side
-            + slippage_per_side
+            total_fee_percent
+            + total_slippage_percent
         )
 
         # Netto-Rendite
@@ -77,29 +79,60 @@ def run_backtest(
             - total_cost_percent
         )
 
+        capital_before = capital
+
+        # Kapitalentwicklung
+        capital = capital * (
+            1 + net_profit_percent / 100
+        )
+
+        capital_after = capital
+
+        # Höchststand aktualisieren
+        if capital > peak_capital:
+            peak_capital = capital
+
+        # Drawdown berechnen
+        drawdown_percent = (
+            (capital - peak_capital)
+            / peak_capital
+        ) * 100
+
+        if drawdown_percent < max_drawdown_percent:
+            max_drawdown_percent = drawdown_percent
+
         trades.append({
+            "Trade": len(trades) + 1,
             "Entry Time": row["timestamp"],
             "Entry Price": entry_price,
             "Exit Time": exit_row["timestamp"],
             "Exit Price": exit_price,
             "Holding Period": holding_period,
             "Gross Profit %": gross_profit_percent,
-            "Fees %": fee_per_side * 2,
-            "Slippage %": slippage_per_side * 2,
-            "Net Profit %": net_profit_percent
+            "Fees %": total_fee_percent,
+            "Slippage %": total_slippage_percent,
+            "Net Profit %": net_profit_percent,
+            "Capital Before": capital_before,
+            "Capital After": capital_after,
+            "Drawdown %": drawdown_percent
         })
 
     trades_df = pd.DataFrame(trades)
 
     if trades_df.empty:
 
-        return trades_df, {
+        statistics = {
             "trades": 0,
             "win_rate": 0.0,
             "average_profit": 0.0,
             "total_profit": 0.0,
-            "total_fees": 0.0
+            "total_fees": 0.0,
+            "initial_capital": initial_capital,
+            "final_capital": initial_capital,
+            "max_drawdown": 0.0
         }
+
+        return trades_df, statistics
 
     winning_trades = (
         trades_df["Net Profit %"] > 0
@@ -128,7 +161,10 @@ def run_backtest(
         "win_rate": win_rate,
         "average_profit": average_profit,
         "total_profit": total_profit,
-        "total_fees": total_fees
+        "total_fees": total_fees,
+        "initial_capital": initial_capital,
+        "final_capital": capital,
+        "max_drawdown": max_drawdown_percent
     }
 
     return trades_df, statistics
