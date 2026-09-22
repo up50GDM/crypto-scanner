@@ -70,13 +70,6 @@ momentum_min = st.sidebar.slider(
 st.sidebar.header("Backtest-Einstellungen")
 
 
-holding_period = st.sidebar.selectbox(
-    "Haltedauer (Stunden)",
-    [12, 24, 48, 72],
-    index=1
-)
-
-
 fee_per_side = st.sidebar.number_input(
     "Gebühr pro Seite (%)",
     min_value=0.0,
@@ -136,6 +129,7 @@ if st.button("Scan starten"):
 
                 df = add_indicators(df)
 
+                # Letzte vollständig abgeschlossene Kerze
                 latest = df.iloc[-2]
 
                 signal = generate_signal(
@@ -178,13 +172,11 @@ if st.button("Scan starten"):
             hide_index=True
         )
 
-
         watchlist = result_df[
             result_df["Signal"] == "🟢 WATCHLIST"
         ]
 
         st.subheader("⭐ Watchlist")
-
 
         if watchlist.empty:
 
@@ -208,92 +200,146 @@ if st.button("Scan starten"):
 
 
 # ============================================================
-# BACKTEST
+# HALTEDAUER-VERGLEICH
 # ============================================================
 
 st.divider()
 
-st.header("📈 Historischer Backtest")
+st.header("📈 Backtest – Vergleich der Haltedauer")
+
+st.write(
+    "Die Strategieparameter bleiben unverändert. "
+    "Nur die Haltedauer wird verändert."
+)
 
 
-if st.button("Backtest starten"):
+if st.button("5 Backtests starten"):
 
-    all_results = []
+    holding_periods = [
+        6,
+        12,
+        24,
+        48,
+        72
+    ]
 
-    for symbol in symbols:
+    comparison_results = []
 
-        try:
+    for holding_period in holding_periods:
 
-            with st.spinner(
-                f"Backtest für {symbol}..."
-            ):
+        st.subheader(
+            f"⏱️ Haltedauer: {holding_period} Stunden"
+        )
 
-                df = get_ohlc(
-                    symbol,
-                    interval=60
+        period_results = []
+
+        for symbol in symbols:
+
+            try:
+
+                with st.spinner(
+                    f"{symbol} – {holding_period} Stunden..."
+                ):
+
+                    df = get_ohlc(
+                        symbol,
+                        interval=60
+                    )
+
+                    trades, stats = run_backtest(
+                        df,
+                        holding_period=holding_period,
+                        fee_per_side=fee_per_side,
+                        slippage_per_side=slippage_per_side,
+                        initial_capital=initial_capital,
+                        rsi_min=rsi_min,
+                        rsi_max=rsi_max,
+                        volume_multiplier=volume_multiplier,
+                        momentum_min=momentum_min
+                    )
+
+                    period_results.append({
+                        "Haltedauer": holding_period,
+                        "Coin": symbol,
+                        "Trades": stats["trades"],
+                        "Trefferquote %": stats["win_rate"],
+                        "Ø Netto %": stats["average_profit"],
+                        "Summe Netto %": stats["total_profit"],
+                        "Startkapital €": stats["initial_capital"],
+                        "Endkapital €": stats["final_capital"],
+                        "Max Drawdown %": stats["max_drawdown"],
+                        "Gebühren %": stats["total_fees"]
+                    })
+
+            except Exception as e:
+
+                st.error(
+                    f"Backtest-Fehler bei "
+                    f"{symbol} ({holding_period}h): {e}"
                 )
 
-                trades, stats = run_backtest(
-                    df,
-                    holding_period=holding_period,
-                    fee_per_side=fee_per_side,
-                    slippage_per_side=slippage_per_side,
-                    initial_capital=initial_capital,
-                    rsi_min=rsi_min,
-                    rsi_max=rsi_max,
-                    volume_multiplier=volume_multiplier,
-                    momentum_min=momentum_min
-                )
+        if period_results:
 
-                all_results.append({
-                    "Coin": symbol,
-                    "Trades": stats["trades"],
-                    "Trefferquote %": stats["win_rate"],
-                    "Ø Netto %": stats["average_profit"],
-                    "Summe Netto %": stats["total_profit"],
-                    "Startkapital €": stats["initial_capital"],
-                    "Endkapital €": stats["final_capital"],
-                    "Max Drawdown %": stats["max_drawdown"],
-                    "Gebühren %": stats["total_fees"]
-                })
+            period_df = pd.DataFrame(
+                period_results
+            )
 
-                # Trade-Liste
-                if not trades.empty:
+            st.dataframe(
+                period_df,
+                use_container_width=True,
+                hide_index=True
+            )
 
-                    with st.expander(
-                        f"📋 Trades – {symbol}"
-                    ):
-
-                        st.dataframe(
-                            trades,
-                            use_container_width=True,
-                            hide_index=True
-                        )
-
-        except Exception as e:
-
-            st.error(
-                f"Backtest-Fehler bei {symbol}: {e}"
+            comparison_results.extend(
+                period_results
             )
 
 
-    if all_results:
+    # ========================================================
+    # GESAMTVERGLEICH
+    # ========================================================
 
-        results_df = pd.DataFrame(
-            all_results
+    if comparison_results:
+
+        st.divider()
+
+        st.header(
+            "📊 Gesamtvergleich aller Haltedauern"
         )
 
-        st.subheader(
-            "📊 Zusammenfassung"
+        comparison_df = pd.DataFrame(
+            comparison_results
         )
 
         st.dataframe(
-            results_df,
+            comparison_df,
             use_container_width=True,
             hide_index=True
         )
 
+
+        # ----------------------------------------------------
+        # SOL SPEZIELL
+        # ----------------------------------------------------
+
+        st.subheader(
+            "🟣 SOL/USD – Haltedauervergleich"
+        )
+
+        sol_df = comparison_df[
+            comparison_df["Coin"] == "SOL/USD"
+        ].copy()
+
+        st.dataframe(
+            sol_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
         st.info(
-            "Historische Backtests sind Simulationen "
-            "und keine Garantie für zukünftige Ergebnisse."
+            "Hinweis: Der Vergleich zeigt historische "
+            "Simulationen. Eine bessere historische "
+            "Performance bedeutet nicht automatisch "
+            "eine bessere zukünftige Performance."
         )
