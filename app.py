@@ -4,6 +4,7 @@ import pandas as pd
 from kraken_api import get_ohlc
 from indicators import add_indicators
 from signals import generate_signal
+from backtest import run_backtest
 
 
 st.set_page_config(
@@ -14,11 +15,19 @@ st.set_page_config(
 
 
 st.title("📊 Crypto Scanner")
-st.write("Markt-Scanner für BTC, ETH, SOL und XRP")
+
+st.write(
+    "Markt-Scanner und historischer Backtest "
+    "für BTC, ETH, SOL und XRP."
+)
 
 
-# Einstellungen
+# ============================================================
+# EINSTELLUNGEN
+# ============================================================
+
 st.sidebar.header("Scanner-Einstellungen")
+
 
 rsi_min = st.sidebar.slider(
     "RSI Minimum",
@@ -27,12 +36,14 @@ rsi_min = st.sidebar.slider(
     value=50
 )
 
+
 rsi_max = st.sidebar.slider(
     "RSI Maximum",
     min_value=0,
     max_value=100,
     value=70
 )
+
 
 volume_multiplier = st.sidebar.slider(
     "Volume Ratio Minimum",
@@ -42,12 +53,45 @@ volume_multiplier = st.sidebar.slider(
     step=0.1
 )
 
+
 momentum_min = st.sidebar.slider(
     "Momentum Minimum (%)",
     min_value=-10.0,
     max_value=10.0,
     value=0.0,
     step=0.5
+)
+
+
+# ============================================================
+# BACKTEST EINSTELLUNGEN
+# ============================================================
+
+st.sidebar.header("Backtest-Einstellungen")
+
+
+holding_period = st.sidebar.selectbox(
+    "Haltedauer",
+    options=[12, 24, 48, 72],
+    index=1
+)
+
+
+fee_per_side = st.sidebar.number_input(
+    "Gebühr pro Seite (%)",
+    min_value=0.0,
+    max_value=2.0,
+    value=0.40,
+    step=0.01
+)
+
+
+slippage_per_side = st.sidebar.number_input(
+    "Slippage pro Seite (%)",
+    min_value=0.0,
+    max_value=2.0,
+    value=0.0,
+    step=0.01
 )
 
 
@@ -59,8 +103,14 @@ symbols = [
 ]
 
 
-# Scanner starten
-if st.button("🔍 Scan starten"):
+# ============================================================
+# AKTUELLER SCAN
+# ============================================================
+
+st.header("🔍 Aktueller Markt-Scan")
+
+
+if st.button("Scan starten"):
 
     results = []
 
@@ -69,10 +119,15 @@ if st.button("🔍 Scan starten"):
         for symbol in symbols:
 
             try:
-                df = get_ohlc(symbol, interval=60)
+
+                df = get_ohlc(
+                    symbol,
+                    interval=60
+                )
+
                 df = add_indicators(df)
 
-                # Letzte vollständige Kerze verwenden
+                # Letzte vollständige Kerze
                 latest = df.iloc[-2]
 
                 signal = generate_signal(
@@ -90,7 +145,11 @@ if st.button("🔍 Scan starten"):
                     "RSI": latest["rsi"],
                     "Volume Ratio": latest["volume_ratio"],
                     "Momentum %": latest["momentum"],
-                    "Signal": "🟢 WATCHLIST" if signal else "⚪"
+                    "Signal": (
+                        "🟢 WATCHLIST"
+                        if signal
+                        else "⚪"
+                    )
                 })
 
             except Exception as e:
@@ -99,8 +158,6 @@ if st.button("🔍 Scan starten"):
                     f"Fehler bei {symbol}: {e}"
                 )
 
-
-    # Ergebnisse anzeigen
     if results:
 
         result_df = pd.DataFrame(results)
@@ -114,7 +171,6 @@ if st.button("🔍 Scan starten"):
         )
 
 
-        # Watchlist
         watchlist = result_df[
             result_df["Signal"] == "🟢 WATCHLIST"
         ]
@@ -125,13 +181,15 @@ if st.button("🔍 Scan starten"):
         if watchlist.empty:
 
             st.info(
-                "Momentan erfüllt kein Coin alle Kriterien."
+                "Momentan erfüllt kein Coin "
+                "alle Kriterien."
             )
 
         else:
 
             st.success(
-                f"{len(watchlist)} Coin(s) erfüllen momentan alle Kriterien."
+                f"{len(watchlist)} Coin(s) "
+                "erfüllen momentan alle Kriterien."
             )
 
             st.dataframe(
@@ -139,3 +197,91 @@ if st.button("🔍 Scan starten"):
                 use_container_width=True,
                 hide_index=True
             )
+
+
+# ============================================================
+# BACKTEST
+# ============================================================
+
+st.divider()
+
+st.header("📈 Historischer Backtest")
+
+
+st.write(
+    "Der Backtest simuliert vergangene Signale "
+    "mit einer festen Haltedauer und berücksichtigt "
+    "Gebühren sowie optionale Slippage."
+)
+
+
+if st.button("Backtest starten"):
+
+    backtest_results = []
+
+    with st.spinner(
+        "Historische Marktdaten werden geladen "
+        "und getestet..."
+    ):
+
+        for symbol in symbols:
+
+            try:
+
+                df = get_ohlc(
+                    symbol,
+                    interval=60
+                )
+
+                trades, statistics = run_backtest(
+                    df,
+                    holding_period=holding_period,
+                    fee_per_side=fee_per_side,
+                    slippage_per_side=slippage_per_side,
+                    rsi_min=rsi_min,
+                    rsi_max=rsi_max,
+                    volume_multiplier=volume_multiplier,
+                    momentum_min=momentum_min
+                )
+
+                backtest_results.append({
+                    "Coin": symbol,
+                    "Trades": statistics["trades"],
+                    "Trefferquote %": statistics["win_rate"],
+                    "Ø Netto-Ergebnis %": statistics[
+                        "average_profit"
+                    ],
+                    "Summe Netto %": statistics[
+                        "total_profit"
+                    ],
+                    "Gebühren %": statistics[
+                        "total_fees"
+                    ]
+                })
+
+            except Exception as e:
+
+                st.error(
+                    f"Backtest-Fehler bei {symbol}: {e}"
+                )
+
+
+    if backtest_results:
+
+        backtest_df = pd.DataFrame(
+            backtest_results
+        )
+
+        st.subheader("Backtest-Ergebnisse")
+
+        st.dataframe(
+            backtest_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+        st.info(
+            "Die Ergebnisse sind historische Simulationen "
+            "und keine Garantie für zukünftige Ergebnisse."
+        )
