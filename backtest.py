@@ -18,6 +18,9 @@ def run_backtest(
     """
     Historischer Backtest ohne überlappende Trades.
 
+    Das Signal wird auf Basis einer abgeschlossenen Kerze erzeugt.
+    Der Einstieg erfolgt erst zum Open der nächsten Kerze.
+
     Nach einem Einstieg wird die Position für die komplette
     Haltedauer gehalten. Während dieser Zeit werden neue Signale
     ignoriert.
@@ -25,6 +28,10 @@ def run_backtest(
     Gebühren und Slippage werden berücksichtigt.
     Der Backtest dient ausschließlich zur Simulation.
     """
+
+    # ============================================================
+    # INDIKATOREN BERECHNEN
+    # ============================================================
 
     df = add_indicators(df)
 
@@ -36,7 +43,15 @@ def run_backtest(
 
     i = 0
 
-    while i < len(df) - holding_period:
+    # ============================================================
+    # BACKTEST
+    # ============================================================
+
+    while i < len(df) - 1:
+
+        # --------------------------------------------------------
+        # Signal auf abgeschlossener Kerze
+        # --------------------------------------------------------
 
         row = df.iloc[i]
 
@@ -48,62 +63,96 @@ def run_backtest(
             momentum_min=momentum_min
         )
 
-        # Kein Signal -> nächste Kerze
         if not signal:
             i += 1
             continue
 
-        # Einstieg
-        entry_price = row["close"]
-        entry_time = row["timestamp"]
+        # --------------------------------------------------------
+        # Einstieg erst bei der nächsten Kerze
+        # --------------------------------------------------------
 
+        entry_index = i + 1
+
+        if entry_index >= len(df):
+            break
+
+        entry_row = df.iloc[entry_index]
+
+        entry_price = entry_row["open"]
+        entry_time = entry_row["timestamp"]
+
+        # --------------------------------------------------------
         # Ausstieg nach der definierten Haltedauer
-        exit_index = i + holding_period
+        # --------------------------------------------------------
+
+        exit_index = entry_index + holding_period
+
+        if exit_index >= len(df):
+            break
+
         exit_row = df.iloc[exit_index]
 
         exit_price = exit_row["close"]
         exit_time = exit_row["timestamp"]
 
-        # Brutto-Rendite
+        # --------------------------------------------------------
+        # Brutto-Ergebnis
+        # --------------------------------------------------------
+
         gross_profit_percent = (
             (exit_price - entry_price)
             / entry_price
         ) * 100
 
+        # --------------------------------------------------------
         # Gebühren
-        total_fee_percent = fee_per_side * 2
+        # --------------------------------------------------------
 
+        total_fee_percent = (
+            fee_per_side * 2
+        )
+
+        # --------------------------------------------------------
         # Slippage
+        # --------------------------------------------------------
+
         total_slippage_percent = (
             slippage_per_side * 2
         )
 
-        # Gesamtkosten
+        # --------------------------------------------------------
+        # Netto-Ergebnis
+        # --------------------------------------------------------
+
         total_cost_percent = (
             total_fee_percent
             + total_slippage_percent
         )
 
-        # Netto-Rendite
         net_profit_percent = (
             gross_profit_percent
             - total_cost_percent
         )
 
+        # --------------------------------------------------------
+        # Kapitalentwicklung
+        # --------------------------------------------------------
+
         capital_before = capital
 
-        # Kapitalentwicklung
         capital = capital * (
             1 + net_profit_percent / 100
         )
 
         capital_after = capital
 
-        # Höchststand aktualisieren
+        # --------------------------------------------------------
+        # Drawdown
+        # --------------------------------------------------------
+
         if capital > peak_capital:
             peak_capital = capital
 
-        # Drawdown
         drawdown_percent = (
             (capital - peak_capital)
             / peak_capital
@@ -112,8 +161,13 @@ def run_backtest(
         if drawdown_percent < max_drawdown_percent:
             max_drawdown_percent = drawdown_percent
 
+        # --------------------------------------------------------
+        # Trade speichern
+        # --------------------------------------------------------
+
         trades.append({
             "Trade": len(trades) + 1,
+            "Signal Time": row["timestamp"],
             "Entry Time": entry_time,
             "Entry Price": entry_price,
             "Exit Time": exit_time,
@@ -128,14 +182,22 @@ def run_backtest(
             "Drawdown %": drawdown_percent
         })
 
-        # WICHTIG:
-        # Wir springen direkt hinter den Ausstieg.
-        # Dadurch können sich Trades nicht überschneiden.
+        # --------------------------------------------------------
+        # Keine überlappenden Trades
+        # --------------------------------------------------------
+
         i = exit_index + 1
+
+    # ============================================================
+    # TRADES DATAFRAME
+    # ============================================================
 
     trades_df = pd.DataFrame(trades)
 
-    # Keine Trades
+    # ============================================================
+    # KEINE TRADES
+    # ============================================================
+
     if trades_df.empty:
 
         statistics = {
@@ -151,32 +213,35 @@ def run_backtest(
 
         return trades_df, statistics
 
-    # Gewinner
+    # ============================================================
+    # STATISTIKEN
+    # ============================================================
+
     winning_trades = (
         trades_df["Net Profit %"] > 0
     ).sum()
 
     total_trades = len(trades_df)
 
-    # Trefferquote
     win_rate = (
         winning_trades / total_trades
     ) * 100
 
-    # Durchschnittlicher Trade
     average_profit = (
         trades_df["Net Profit %"].mean()
     )
 
-    # Summe der Einzelrenditen
     total_profit = (
         trades_df["Net Profit %"].sum()
     )
 
-    # Gesamte Gebühren
     total_fees = (
         trades_df["Fees %"].sum()
     )
+
+    # ============================================================
+    # STATISTIKEN ZUSAMMENSTELLEN
+    # ============================================================
 
     statistics = {
         "trades": total_trades,
